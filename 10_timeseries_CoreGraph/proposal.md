@@ -2,7 +2,7 @@
 
 Contributors: [@Theavinash02](https://github.com/Theavinash02)
 
-Related: pgmpy#3575 (this work), pgmpy#3582 / pgmpy#3588 (PCMCI estimators), pgmpy#3585 (`DAG` migration to `_CoreGraph`)
+Related: pgmpy#3575 
 
 ### Introduction
 
