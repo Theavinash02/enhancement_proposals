@@ -1,8 +1,8 @@
 ## Time-series graph representation: `_TimeseriesCoreGraph`, `TimeseriesDAG`, `TimeseriesPDAG`
 
-Contributors: [@Thavinash02](https://github.com/Thavinash02)
+Contributors: [@Theavinash02](https://github.com/Theavinash02)
 
-Related: pgmpy#3575
+Related: pgmpy#3575 (this work), pgmpy#3582 / pgmpy#3588 (PCMCI estimators), pgmpy#3585 (`DAG` migration to `_CoreGraph`)
 
 ### Introduction
 
@@ -13,21 +13,20 @@ pgmpy has no class that can hold a stationary time-series causal graph. The only
    rather than deriving it, so one link occupies two stored edges.
 2. It is limited to lag 1. There is no `tau_max`.
 3. It carries CPDs and a `check_model` contract. Causal discovery produces structure only.
-4. It has no way to represent an unoriented link. PCMCI+ returns contemporaneous links it cannot orient, and the
-   latent-confounder variants return circle and bidirected endpoints.
+4. It has no way to represent an unoriented link.
 5. There is no way to read in the output format these algorithms use: tigramite's `(N, N, tau_max + 1)` array,
    where `graph[i, j, tau]` describes the link between `var_i` at lag `tau` and `var_j` in the present.
 
+pgmpy#3588 adds PCMCI estimators and needs a return type for `causal_graph_`. This proposal covers the
+representation only. The estimators are separate work, and `from_adjacency` is the boundary between the two.
 
 ### Proposed Solution
 
-A private base class `_TimeseriesCoreGraph(_CoreGraph)` holds the lag handling: `tau_max`, node and edge
+A private base class `_TimeseriesCoreGraph(_CoreGraph)` would hold the lag handling: `tau_max`, node and edge
 normalisation, and the adjacency conversion. Two public classes inherit it and declare which edge types they
 allow.
 
 <img width="693" height="556" alt="image" src="https://github.com/user-attachments/assets/00fc5e02-dd3f-4420-b263-4d26e0532edd" />
-
-
 
 `_CoreGraph`'s subclasses differ in which edge types they allow. The time-series classes differ in what a node
 is. Those are independent, which is why `_TimeseriesCoreGraph` can inherit `_CoreGraph` instead of being a
@@ -46,35 +45,94 @@ keeps its endpoint marks. Shifted copies follow from stationarity and are not st
 
 This is tigramite's layout, so `graph[i, j, tau]` maps directly onto one stored edge.
 
+A single `_time_origin` class attribute decides what "now" is called when edges are read back. It is 0 in the
+base, so a lag-1 link reads as `("A", -1) -> ("B", 0)`. A subclass that counts slices forward sets it to 1 and
+the same link reads as `("A", 0) -> ("B", 1)`. Storage does not change; only what the caller sees. Every method
+that reports endpoints - `get_edges`, `get_parents`, `get_children` - renders through it, and every method that
+reasons about lags works on the stored offsets, so the two can never disagree.
+
+Where a method takes an optional edge type, the "any type" value is `None` rather than a literal edge type.
+`"--"` would be the obvious sentinel but it is not in `TimeseriesDAG.SUPPORTED_EDGE_TYPES`, so a query would be
+passing that class an edge type it does not accept. `None` is carried through an endpoint swap unchanged.
+
+#### Adjacency: `"tigramite"` as a sixth encoding
+
+`_CoreGraph` already defines `from_adjacency` / `to_adjacency`, with an `encoding` argument selecting the
+format - `edge_type`, `binary`, `bnlearn`, `causal-learn`, `pcalg` - and documents the round-trip invariant
+`cls.from_adjacency(g.to_adjacency(e), encoding=e) == g`.
+
+A time-series graph needs a third dimension for the lag, which none of those encodings has. Overriding the
+inherited methods with a different signature and return type would silently break that invariant for anyone
+holding a `TimeseriesDAG`.
+
+The proposal is to add `"tigramite"` as a sixth encoding rather than to override:
+
+```python
+from_adjacency(cls, adj, encoding="edge_type", variables=None)
+to_adjacency(self, encoding="edge_type", nodelist=None, variables=None)
+```
+
+- The default stays `edge_type`, so nothing changes for a caller who does not ask for the new format.
+- A 3-D input auto-selects `tigramite`, so an estimator handing over a `(N, N, tau_max + 1)` array needs no
+  encoding argument.
+- Every other encoding delegates to `super()`.
+- The round-trip invariant holds for all six.
+
+Naming precedent: three of the five existing encodings (`bnlearn`, `causal-learn`, `pcalg`) are already named
+after third-party tools, so `tigramite` is consistent with how the argument is already used.
+
+The translation between tigramite's three-character marks and pgmpy's two-character edge types lives in a
+`_MARK_TO_EDGE_TYPE` class attribute. The base declares it empty and documents the vocabulary a subclass may
+draw on; each subclass supplies its own. A subclass that forgets gets `NotImplementedError` naming it, rather
+than silently inheriting a table that admits marks it cannot hold. This also means mark rejection needs no
+per-class code: a mark is accepted only if the table translates it and the translation is in
+`SUPPORTED_EDGE_TYPES`.
+
 #### Why inherit `_CoreGraph`
 
 - `_CoreGraph` stores orientation as per-endpoint markers (`-`, `>`, `o`) on an `nx.MultiGraph`, not as directed
   edges. That covers what time-series discovery returns: `->` oriented, `--` unoriented, and `o>` / `oo` / `<>`
   for the latent-confounder algorithms. None of it assumes contemporaneity.
 - Subclasses restrict themselves with `SUPPORTED_EDGE_TYPES`, as `PDAG`, `ADMG` and `MAG` already do.
-  `TimeseriesDAG` and `TimeseriesPDAG` differ only in that frozenset and in a mark table, so both are under 80
-  lines.
-- `from_adjacency` accepts a tigramite mark only if `_MARK_TO_EDGE_TYPE` translates it and the translation is in
-  `SUPPORTED_EDGE_TYPES`. `TimeseriesDAG` rejects `o-o` and `x-x` with no code of its own, and `TimeseriesPDAG`
-  accepts `o-o` by adding one dictionary entry.
+  `TimeseriesDAG` and `TimeseriesPDAG` differ only in that frozenset and in a mark table.
 - Acyclicity needs no new code. A lagged edge cannot close a directed cycle: its tail is at a strictly earlier
   offset and stored edges always end at offset 0, so no lagged node has an incoming edge. The inherited cycle
   guard only fires within the present slice.
-- `get_parents`, `get_children`, `get_ancestors`, `get_descendants`, `get_skeleton`, `get_marker` / `set_marker`,
-  `replace_edge`, roles and plotting are all inherited. Adding a `TimeseriesADMG` would take six lines.
+- 46 methods come from the existing hierarchy and need no time-specific handling - 25 from `_CoreGraph`, 10 from
+  `_GraphAlgorithms`, 11 from `_GraphRolesMixin`. Only 8 need overriding.
 
-Adding an optional lag to `_CoreGraph` itself would put a temporal concept into `PDAG`, `ADMG` and `MAG`, where
-it has no meaning. Keeping it in a subclass leaves those classes unchanged.
+#### What happens to `DynamicBayesianNetwork`
+
+pgmpy#3575 names DBN in its title, so this proposal has to say where it lands. It does not propose a change to
+DBN, and it does not treat the question as settled.
+
+A DBN is the `tau_max = 1` case of a time-series graph, which makes re-parenting it onto `TimeseriesDAG` look
+natural. Under `_TimeseriesCoreGraph(_CoreGraph)` the cost is concrete: `TimeseriesDAG` is not a `DAG`, so a
+re-parented DBN would lose `moralize` and `active_trail_nodes`, which `_CoreGraph` does not define, along with
+its `nx.DiGraph` substrate.
+
+One thing to weigh on the other side: pgmpy#3585 migrates `DAG` itself to `_CoreGraph`, so DBN loses the
+`DiGraph` substrate eventually regardless of what this PR does. The question is whether the two method losses
+are acceptable and when they should happen, not whether the substrate change can be avoided.
+
+This is an open question for the maintainer. The conservative option is explicit conversion methods rather than
+inheritance.
 
 ### Alternative Solutions
 
-**1. `TimeseriesDAG(DAG)`** — the original plan in pgmpy#3575. 
-- `DAG` is an `nx.DiGraph` and `_CoreGraph` is an `nx.MultiGraph`, so a re-parented DBN would change its
-  underlying networkx class and lose `moralize` and `active_trail_nodes`.
-- `DynamicBayesianNetwork.add_edge` requires `(variable, time_slice)` nodes and normalises slice indices, so
-  it accepts less than its parent would.
+**1. `TimeseriesDAG(DAG)`** - the original direction in pgmpy#3575. `DAG` still inherits `nx.DiGraph` rather
+than `_CoreGraph` (pgmpy#3585 is pending), so it does not store endpoint markers: `TimeseriesPDAG` could not
+share a base with it, and unoriented links would have nowhere to go. Every lag-handling method would also have
+to be written against a second storage model rather than reusing the one `PDAG`, `ADMG` and `MAG` already use.
 
-   Explicit conversion methods are the alternative to inheritance.
+**2. A standalone base, inheriting neither `_CoreGraph` nor `DAG`.** Closest to tigramite and apparently the
+smallest change, since nothing has to fit an existing contract. The cost is what stops being free:
+
+- The 46 methods listed above would have to be reimplemented or dropped, including the marker representation,
+  m-separation, and the subgraph machinery - code that already exists and is already tested in pgmpy.
+- A second copy of the graph internals to maintain, which drifts from the first as `_CoreGraph` changes.
+- A `TimeseriesADMG`, if the latent-confounder algorithms want one later, becomes a third copy rather than two
+  class attributes.
 
 ### Details of proposed solution
 
@@ -85,106 +143,196 @@ Class purpose and method signatures only.
 ```python
 class _TimeseriesCoreGraph(_CoreGraph):
     """
-    Base class for time-series graph types. Every endpoint is a (variable, time) pair and only the lag between
-    an edge's endpoints is stored. Subclasses declare `SUPPORTED_EDGE_TYPES` as the static classes do; the time
-    handling here does not depend on which edge types they choose.
+    Base class for time-series graph types. A node is a (variable, time) pair, and what gets stored for an
+    edge is the gap between its two times, not the times themselves. Subclasses say which edge types they
+    accept, the same way the non-time-series classes do; none of the time handling here depends on that
+    choice.
     """
 
-    _time_origin = 0            # the time the present slice is reported as when edges are read back
-    _STATIC_CLASS = None        # the static class `unroll` expands into
-    _MARK_TO_EDGE_TYPE = {...}  # tigramite mark -> pgmpy edge_type; marks not listed are rejected
+    _time_origin = 0        # what "now" is called when an edge is handed back to the caller
+    _MARK_TO_EDGE_TYPE = {} # tigramite mark -> pgmpy edge type; empty here, each subclass fills it in
 
     def __init__(self, edge_list=None, tau_max=None, exposures=None, outcomes=None, latents=None, roles=None):
-        """Builds from (u, v, edge_type) triples. Sets `tau_max` before `super().__init__`, because the inherited constructor adds edges through the overridden `add_edge`, which reads it."""
+        """
+        Builds the graph from (u, v, edge_type) triples.
+
+        `tau_max` has to be set before calling the parent constructor, because the parent adds the edges by
+        calling `add_edge`, and this class's `add_edge` checks the lag against `tau_max`.
+        """
 
     # tau_max
 
     def _set_tau_max(self, tau_max):
-        """Stores `tau_max` and whether it was declared. A declared value is enforced; an undeclared one starts at 0 and grows. An (N, N, tau_max + 1) array declares a maximum lag even when no edge reaches it, so the distinction has to survive a round trip."""
+        """
+        Records the maximum lag, and whether the caller asked for one.
+
+        Those are two different situations. If a maximum was given, exceeding it is an error. If none was
+        given, it starts at 0 and rises to fit whatever is added. The difference has to be remembered because
+        an (N, N, tau_max + 1) array states a maximum even when no edge actually reaches it, and converting
+        the graph back has to produce an array of the same shape.
+        """
 
     @property
     def tau_max(self):
-        """The maximum lag the graph accepts."""
+        """The largest lag this graph will accept."""
 
     def _check_lag(self, lag):
-        """Enforces a declared `tau_max`, or grows an undeclared one."""
+        """Rejects a lag above a maximum the caller set, or raises the maximum when the caller set none."""
 
     # normalisation
 
     @staticmethod
     def _normalize_node(node):
-        """Coerces a node into a (variable, time) pair. A bare name is read as time 0; objects with `to_tuple`, such as `DynamicNode`, are unwrapped."""
+        """
+        Turns whatever was passed into a (variable, time) pair.
+
+        A bare name counts as time 0. A `DynamicNode`, or anything else with a `to_tuple` method, is unwrapped
+        first.
+        """
 
     def _normalize_edge(self, u, v, edge_type):
-        """Reduces an edge to its lag, head at offset 0 and tail at -lag. A negative lag is stored with endpoints swapped and `edge_type` inverted."""
+        """
+        Works out the lag and puts the edge in one fixed position: head at time 0, tail at minus the lag.
+
+        An edge written backwards in time is not refused. Its two ends are swapped and its edge type inverted,
+        which gives the same link written the other way round. `edge_type=None` means "any type" and stays
+        None through the swap.
+        """
 
     # mutation
 
     def add_node(self, node, **attr):
-        """Adds a variable at offset 0. An existing node keeps its stored offset, because inherited code such as `with_role` calls `add_node` to attach attributes."""
+        """
+        Adds a variable, placed at time 0.
 
-    def add_nodes_from(self, nodes, **attr): ...
+        A node already in the graph keeps the time it has. This matters because inherited code such as
+        `with_role` calls `add_node` to attach an attribute to an existing node; moving it would attach the
+        attribute to a different node.
+        """
+
+    def add_nodes_from(self, nodes, **attr):
+        """Several at once, each following the rule above."""
 
     def add_edge(self, u, v, edge_type):
-        """Adds a link. The lag is checked against `tau_max`; the absolute times are not."""
+        """
+        Adds a link.
 
-    def remove_edge(self, u, v, edge_type): ...
+        The lag is checked against `tau_max`. The times themselves are not checked, so any time frame works.
+        """
+
+    def remove_edge(self, u, v, edge_type):
+        """
+        Removes a link, written in any time frame.
+
+        The edge goes through the same normalising as `add_edge`, so a link can be removed using different
+        times than the ones it was added with.
+        """
 
     def has_edge(self, u, v, edge_type=None):
-        """Membership test, in any time frame."""
+        """Whether a link is present, in any time frame. `None` means any edge type will do."""
 
     # accessors
 
     @property
     def variables(self):
-        """The distinct variable names, ignoring offsets."""
+        """
+        The variable names, with times dropped and duplicates removed.
+
+        This also fixes the row and column order of the tigramite array.
+        """
 
     def _render_node(self, node) / _derender_node(self, node):
-        """Converts a stored offset to a caller-facing time and back, shifting by `_time_origin`."""
+        """
+        The one place a stored time becomes a time the caller sees, and the reverse.
+
+        Both shift by `_time_origin`, which is 0 here, so by default they change nothing.
+        """
 
     def _stored_edges(self, edge_types=None):
-        """Edges as stored, with offsets. Everything that reasons about lags uses this, so `_time_origin` only affects what is reported."""
+        """
+        The edges as stored, with their own times rather than the caller's.
+
+        Everything that calculates with lags uses this rather than `get_edges`, which is what keeps
+        `_time_origin` from affecting any result.
+        """
 
     def get_edges(self, data=True, edge_types=None):
-        """The edges, with endpoints in the caller's time frame."""
+        """The edges, with their times converted into the caller's frame."""
+
+    def get_parents(self, nodes) / get_children(self, nodes):
+        """
+        As inherited, except the times are converted into the caller's frame.
+
+        Without that they would disagree with `get_edges`, which reports the same edges.
+        """
 
     def get_links(self):
-        """Every edge as (tail_variable, head_variable, lag, edge_type). Maps one-to-one onto a cell of the adjacency array."""
+        """
+        Every edge as (tail_variable, head_variable, lag, edge_type), with no times at all. One tuple
+        corresponds to one cell of the tigramite array.
+
+        The earlier end is always put first. That is not automatic: for a symmetric edge type such as `"--"`
+        the inherited edge view may return the two ends either way round, and the lag has to be measured from
+        the earlier one.
+        """
 
     def get_lag(self, u, v):
-        """The lag of a link."""
+        """How far apart in time the two ends of a link are, whatever type of link it is."""
 
     def get_intra_edges(self) / get_inter_edges(self):
-        """Links at lag 0, and links at lag >= 1."""
+        """
+        Links within one time point, and links across time points.
+
+        Named to match the methods DBN already has.
+        """
 
     def get_parents_by_lag(self, variable):
-        """The parents of a variable, grouped by lag: {1: ["A"], 2: ["A", "C"]}. Conditioning sets need the lag along with the name."""
+        """
+        The parents of a variable, grouped by how far back they sit: {1: ["A"], 2: ["A", "C"]}.
 
-    # adjacency arrays
+        The lag has to come back alongside the name, because that pair is what a conditioning set is built
+        from.
+        """
 
-    @classmethod
-    def from_adjacency(cls, graph, variables=None):
-        """Builds the graph from a tigramite-style (N, N, tau_max + 1) array. Accepts string marks and the raw 0/1 array PCMCI returns before conversion."""
-
-    def to_adjacency(self, variables=None):
-        """The graph back as an array of string marks, in a given variable order."""
-
-    # conversion
-
-    def unroll(self, n_time_points):
-        """Expands the structure over N time points into `_STATIC_CLASS`, with absolute (variable, t) nodes. Only links whose tail is inside the window are drawn, so the first `tau_max` points have incomplete parent sets."""
+    # adjacency
 
     @classmethod
-    def _build_static(cls, edge_list):
-        """Constructs the static counterpart. Defaults to the `_CoreGraph` constructor signature."""
+    def from_adjacency(cls, adj, encoding="edge_type", variables=None):
+        """
+        Adds one more encoding, "tigramite", to the five the parent class already accepts. A tigramite array
+        has three dimensions, (N, N, tau_max + 1), because of the lag. Both shapes tigramite produces work:
+        text marks like "-->", and the plain 0/1 array it gives before conversion.
+
+        Because none of the other five encodings is three-dimensional, a 3-D array picks this one on its own
+        and the caller need not name it. Any other encoding is passed straight to the parent class.
+
+        A subclass has to say which tigramite marks it can hold; one that does not gets NotImplementedError
+        rather than a wrong answer.
+        """
+
+    def to_adjacency(self, encoding="edge_type", nodelist=None, variables=None):
+        """
+        The reverse, with the same six encodings.
+
+        A graph converted out and back comes back equal to itself, for every one of them.
+        """
 
     # identity
 
     def get_subgraph(self, nodes=None, edge_types=None):
-        """As inherited, but carries `tau_max` onto the result. The inherited version rebuilds through `self.__class__()`, which would reset it. `copy` uses this method, so one override covers both."""
+        """
+        As inherited, but the result keeps the original `tau_max`.
+
+        The inherited version builds the result by calling `self.__class__()` with no arguments, which would
+        reset it to 0. `copy` is built on this method, so this one override fixes both.
+        """
 
     def __eq__(self, other) / __hash__(self):
-        """Equal when the inherited structure, roles and class match and `tau_max` agrees."""
+        """
+        Two graphs are equal when the inherited comparison says so and their `tau_max` agrees.
+
+        Same links but different maximum lags means different graphs, because they accept different things.
+        """
 ```
 
 #### `pgmpy/base/TimeseriesDAG.py`
@@ -192,30 +340,33 @@ class _TimeseriesCoreGraph(_CoreGraph):
 ```python
 class TimeseriesDAG(_TimeseriesCoreGraph):
     """
-    Directed acyclic graph over a stationary time series. Fully oriented structure only; an algorithm that
-    leaves lag-0 links unoriented produces a `TimeseriesPDAG`.
+    Directed acyclic graph over a stationary time series. Every link is oriented. An algorithm that leaves
+    some same-time links unoriented produces a `TimeseriesPDAG` instead.
     """
 
     SUPPORTED_EDGE_TYPES = frozenset(["->", "<-"])
-    _STATIC_CLASS = DAG
     _MARK_TO_EDGE_TYPE = {"-->": "->", "<--": "<-"}
-
-    @classmethod
-    def _build_static(cls, edge_list):
-        """`DAG` is not yet migrated to `_CoreGraph` (pgmpy#3585), so it takes two-tuples through `ebunch`. Deletable once it is."""
 ```
+
+A DAG has only directed links, so why list both `"->"` and `"<-"`? Because an edge written backwards in time
+is turned round rather than refused, and turning it round inverts its type, so the link arrives as `"<-"`. If
+`"<-"` were not accepted, that rewrite would fail. `PDAG` lists both for the same reason.
 
 #### `pgmpy/base/TimeseriesPDAG.py`
 
 ```python
 class TimeseriesPDAG(_TimeseriesCoreGraph):
     """
-    Partially directed counterpart. Lag-0 links that could not be oriented are held as "--". Lagged links are
-    always oriented, because time orders them.
+    The partially directed counterpart. A same-time link the algorithm could not orient is held as "--".
+    Lagged links are always oriented, because time decides the direction.
     """
 
     SUPPORTED_EDGE_TYPES = frozenset(["->", "<-", "--"])
-    _STATIC_CLASS = PDAG
     _MARK_TO_EDGE_TYPE = {"-->": "->", "<--": "<-", "o-o": "--"}
 ```
 
+`"--"` means the algorithm found a link but could not say which way it points. That can only happen at lag 0.
+Across time there is nothing to decide: the earlier event is the cause, because the later one cannot be.
+
+Neither subclass defines a method. All that separates them is which edge types they accept and which tigramite
+marks turn into those types.
