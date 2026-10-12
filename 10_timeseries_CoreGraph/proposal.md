@@ -16,9 +16,7 @@ pgmpy has no class that can hold a stationary time-series causal graph. The only
 4. It has no way to represent an unoriented link.
 5. There is no way to read in the output format these algorithms use: tigramite's `(N, N, tau_max + 1)` array,
    where `graph[i, j, tau]` describes the link between `var_i` at lag `tau` and `var_j` in the present.
-
-pgmpy#3588 adds PCMCI estimators and needs a return type for `causal_graph_`. This proposal covers the
-representation only. The estimators are separate work, and `from_adjacency` is the boundary between the two.
+
 
 ### Proposed Solution
 
@@ -45,9 +43,7 @@ keeps its endpoint marks. Shifted copies follow from stationarity and are not st
 
 This is tigramite's layout, so `graph[i, j, tau]` maps directly onto one stored edge.
 
-A single `_time_origin` class attribute decides what "now" is called when edges are read back. It is 0 in the
-base, so a lag-1 link reads as `("A", -1) -> ("B", 0)`. A subclass that counts slices forward sets it to 1 and
-the same link reads as `("A", 0) -> ("B", 1)`. Storage does not change; only what the caller sees. Every method
+A single `_time_origin` class attribute decides what "now" is called when edges are read back. It is 0 in thebase, so a lag-1 link reads as `("A", -1) -> ("B", 0)`. A subclass that counts slices forward sets it to 1 andthe same link reads as `("A", 0) -> ("B", 1)`. Storage does not change; only what the caller sees. Every method
 that reports endpoints - `get_edges`, `get_parents`, `get_children` - renders through it, and every method that
 reasons about lags works on the stored offsets, so the two can never disagree.
 
@@ -101,22 +97,13 @@ per-class code: a mark is accepted only if the table translates it and the trans
 - 46 methods come from the existing hierarchy and need no time-specific handling - 25 from `_CoreGraph`, 10 from
   `_GraphAlgorithms`, 11 from `_GraphRolesMixin`. Only 8 need overriding.
 
-#### What happens to `DynamicBayesianNetwork`
-
-pgmpy#3575 names DBN in its title, so this proposal has to say where it lands. It does not propose a change to
-DBN, and it does not treat the question as settled.
+#### What happens to `DynamicBayesianNetwork`
 
 A DBN is the `tau_max = 1` case of a time-series graph, which makes re-parenting it onto `TimeseriesDAG` look
 natural. Under `_TimeseriesCoreGraph(_CoreGraph)` the cost is concrete: `TimeseriesDAG` is not a `DAG`, so a
 re-parented DBN would lose `moralize` and `active_trail_nodes`, which `_CoreGraph` does not define, along with
-its `nx.DiGraph` substrate.
+its `nx.DiGraph` substrate.
 
-One thing to weigh on the other side: pgmpy#3585 migrates `DAG` itself to `_CoreGraph`, so DBN loses the
-`DiGraph` substrate eventually regardless of what this PR does. The question is whether the two method losses
-are acceptable and when they should happen, not whether the substrate change can be avoided.
-
-This is an open question for the maintainer. The conservative option is explicit conversion methods rather than
-inheritance.
 
 ### Alternative Solutions
 
@@ -125,14 +112,6 @@ than `_CoreGraph` (pgmpy#3585 is pending), so it does not store endpoint markers
 share a base with it, and unoriented links would have nowhere to go. Every lag-handling method would also have
 to be written against a second storage model rather than reusing the one `PDAG`, `ADMG` and `MAG` already use.
 
-**2. A standalone base, inheriting neither `_CoreGraph` nor `DAG`.** Closest to tigramite and apparently the
-smallest change, since nothing has to fit an existing contract. The cost is what stops being free:
-
-- The 46 methods listed above would have to be reimplemented or dropped, including the marker representation,
-  m-separation, and the subgraph machinery - code that already exists and is already tested in pgmpy.
-- A second copy of the graph internals to maintain, which drifts from the first as `_CoreGraph` changes.
-- A `TimeseriesADMG`, if the latent-confounder algorithms want one later, becomes a third copy rather than two
-  class attributes.
 
 ### Details of proposed solution
 
