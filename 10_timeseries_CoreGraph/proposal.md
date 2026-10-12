@@ -16,7 +16,8 @@ pgmpy has no class that can hold a stationary time-series causal graph. The only
 4. It has no way to represent an unoriented link.
 5. There is no way to read in the output format these algorithms use: tigramite's `(N, N, tau_max + 1)` array,
    where `graph[i, j, tau]` describes the link between `var_i` at lag `tau` and `var_j` in the present.
-
+
+
 
 ### Proposed Solution
 
@@ -43,7 +44,9 @@ keeps its endpoint marks. Shifted copies follow from stationarity and are not st
 
 This is tigramite's layout, so `graph[i, j, tau]` maps directly onto one stored edge.
 
-A single `_time_origin` class attribute decides what "now" is called when edges are read back. It is 0 in thebase, so a lag-1 link reads as `("A", -1) -> ("B", 0)`. A subclass that counts slices forward sets it to 1 andthe same link reads as `("A", 0) -> ("B", 1)`. Storage does not change; only what the caller sees. Every method
+A single `_time_origin` class attribute decides what "now" is called when edges are read back. It is 0 in the
+base, so a lag-1 link reads as `("A", -1) -> ("B", 0)`. A subclass that counts slices forward sets it to 1 and
+the same link reads as `("A", 0) -> ("B", 1)`. Storage does not change; only what the caller sees. Every method
 that reports endpoints - `get_edges`, `get_parents`, `get_children` - renders through it, and every method that
 reasons about lags works on the stored offsets, so the two can never disagree.
 
@@ -91,16 +94,15 @@ per-class code: a mark is accepted only if the table translates it and the trans
   for the latent-confounder algorithms. None of it assumes contemporaneity.
 - Subclasses restrict themselves with `SUPPORTED_EDGE_TYPES`, as `PDAG`, `ADMG` and `MAG` already do.
   `TimeseriesDAG` and `TimeseriesPDAG` differ only in that frozenset and in a mark table.
-- Acyclicity needs no new code. A lagged edge cannot close a directed cycle: its tail is at a strictly earlier
-  offset and stored edges always end at offset 0, so no lagged node has an incoming edge. The inherited cycle
-  guard only fires within the present slice.
 
-#### What happens to `DynamicBayesianNetwork`
+#### What happens to `DynamicBayesianNetwork`
+
 
 A DBN is the `tau_max = 1` case of a time-series graph, which makes re-parenting it onto `TimeseriesDAG` look
 natural. Under `_TimeseriesCoreGraph(_CoreGraph)` the cost is concrete: `TimeseriesDAG` is not a `DAG`, so a
 re-parented DBN would lose `moralize` and `active_trail_nodes`, which `_CoreGraph` does not define, along with
-its `nx.DiGraph` substrate.
+its `nx.DiGraph` substrate.
+
 
 
 ### Alternative Solutions
