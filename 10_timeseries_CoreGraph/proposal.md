@@ -94,8 +94,6 @@ per-class code: a mark is accepted only if the table translates it and the trans
 - Acyclicity needs no new code. A lagged edge cannot close a directed cycle: its tail is at a strictly earlier
   offset and stored edges always end at offset 0, so no lagged node has an incoming edge. The inherited cycle
   guard only fires within the present slice.
-- 46 methods come from the existing hierarchy and need no time-specific handling - 25 from `_CoreGraph`, 10 from
-  `_GraphAlgorithms`, 11 from `_GraphRolesMixin`. Only 8 need overriding.
 
 #### What happens to `DynamicBayesianNetwork`
 
