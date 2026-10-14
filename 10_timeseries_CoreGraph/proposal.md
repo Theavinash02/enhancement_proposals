@@ -376,5 +376,13 @@ g.tau_max
 1
 ```
  
+```python
+g.add_edge(("C", -3), ("B", 0), "->")
+g.tau_max
+```
+
+```
+3
+```
 
 ### Open Questions
