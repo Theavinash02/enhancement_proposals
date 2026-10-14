@@ -343,6 +343,38 @@ Neither subclass defines a method, and neither declares anything but its frozens
 decides which tigramite marks the class will accept.
 
 ### User journeys with the solution
-
+**1. Building a graph**
+ 
+```python
+from pgmpy.base import TimeseriesDAG
+ 
+dag = TimeseriesDAG(
+    edge_list=[
+        (("A", -1), ("A", 0), "->"),
+        (("A", -1), ("B", 0), "->"),
+        (("B", 0), ("C", 0), "->"),
+        (("C", -2), ("A", 0), "->"),
+    ],
+    tau_max=2,
+)
+dag.tau_max
+```
+ 
+```
+2
+```
+ 
+A maximum the caller sets is kept even when no edge reaches it, so converting to an array produces the shape
+they asked for. Left out, it starts at 0 and rises to fit whatever is added:
+ 
+```python
+g = TimeseriesDAG(edge_list=[(("A", -1), ("B", 0), "->")])
+g.tau_max
+```
+ 
+```
+1
+```
+ 
 
 ### Open Questions
