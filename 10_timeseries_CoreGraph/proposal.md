@@ -2,7 +2,7 @@
 
 Contributors: [@Theavinash02](https://github.com/Theavinash02)
 
-Related: pgmpy#3575 
+Related: pgmpy#3575
 
 ### Introduction
 
@@ -16,8 +16,6 @@ pgmpy has no class that can hold a stationary time-series causal graph. The only
 4. It has no way to represent an unoriented link.
 5. There is no way to read in the output format these algorithms use: tigramite's `(N, N, tau_max + 1)` array,
    where `graph[i, j, tau]` describes the link between `var_i` at lag `tau` and `var_j` in the present.
-
-
 
 ### Proposed Solution
 
@@ -80,12 +78,13 @@ to_adjacency(self, encoding="edge_type", nodelist=None, variables=None)
 Naming precedent: three of the five existing encodings (`bnlearn`, `causal-learn`, `pcalg`) are already named
 after third-party tools, so `tigramite` is consistent with how the argument is already used.
 
-The translation between tigramite's three-character marks and pgmpy's two-character edge types lives in a
-`_MARK_TO_EDGE_TYPE` class attribute. The base declares it empty and documents the vocabulary a subclass may
-draw on; each subclass supplies its own. A subclass that forgets gets `NotImplementedError` naming it, rather
-than silently inheriting a table that admits marks it cannot hold. This also means mark rejection needs no
-per-class code: a mark is accepted only if the table translates it and the translation is in
-`SUPPORTED_EDGE_TYPES`.
+The table translating tigramite’s three-character marks to and from pgmpy’s two-character edge types is local
+to `from_adjacency` and `to_adjacency`, exactly as `_CoreGraph` already keeps its `pcalg` and `causal-learn`
+code tables inside the two methods that use them. It covers the whole tigramite vocabulary, and
+`SUPPORTED_EDGE_TYPES` does the filtering: a mark is accepted only if the table translates it and the
+translation is one the class admits. Mark rejection therefore needs no per-class code and no per-class table -
+`TimeseriesDAG` turns away `o-o` because `--`is not in its frozenset, through the same validation path as any
+other edge. tigramite’s `x-x` has no pgmpy edge type and so is in no table at all.
 
 #### Why inherit `_CoreGraph`
 
@@ -93,17 +92,14 @@ per-class code: a mark is accepted only if the table translates it and the trans
   edges. That covers what time-series discovery returns: `->` oriented, `--` unoriented, and `o>` / `oo` / `<>`
   for the latent-confounder algorithms. None of it assumes contemporaneity.
 - Subclasses restrict themselves with `SUPPORTED_EDGE_TYPES`, as `PDAG`, `ADMG` and `MAG` already do.
-  `TimeseriesDAG` and `TimeseriesPDAG` differ only in that frozenset and in a mark table.
+  `TimeseriesDAG` and `TimeseriesPDAG` differ only in that frozenset.
 
 #### What happens to `DynamicBayesianNetwork`
-
 
 A DBN is the `tau_max = 1` case of a time-series graph, which makes re-parenting it onto `TimeseriesDAG` look
 natural. Under `_TimeseriesCoreGraph(_CoreGraph)` the cost is concrete: `TimeseriesDAG` is not a `DAG`, so a
 re-parented DBN would lose `moralize` and `active_trail_nodes`, which `_CoreGraph` does not define, along with
 its `nx.DiGraph` substrate.
-
-
 
 ### Alternative Solutions
 
@@ -111,7 +107,6 @@ its `nx.DiGraph` substrate.
 than `_CoreGraph` (pgmpy#3585 is pending), so it does not store endpoint markers: `TimeseriesPDAG` could not
 share a base with it, and unoriented links would have nowhere to go. Every lag-handling method would also have
 to be written against a second storage model rather than reusing the one `PDAG`, `ADMG` and `MAG` already use.
-
 
 ### Details of proposed solution
 
@@ -129,7 +124,6 @@ class _TimeseriesCoreGraph(_CoreGraph):
     """
 
     _time_origin = 0        # what "now" is called when an edge is handed back to the caller
-    _MARK_TO_EDGE_TYPE = {} # tigramite mark -> pgmpy edge type; empty here, each subclass fills it in
 
     def __init__(self, edge_list=None, tau_max=None, exposures=None, outcomes=None, latents=None, roles=None):
         """
@@ -285,13 +279,13 @@ class _TimeseriesCoreGraph(_CoreGraph):
         Because none of the other five encodings is three-dimensional, a 3-D array picks this one on its own
         and the caller need not name it. Any other encoding is passed straight to the parent class.
 
-        A subclass has to say which tigramite marks it can hold; one that does not gets NotImplementedError
-        rather than a wrong answer.
+        The mark table is defined here, covering the whole tigramite vocabulary; a mark is kept only if its
+        translation is in the class’s SUPPORTED_EDGE_TYPES. A subclass declares nothing for this to work.
         """
 
     def to_adjacency(self, encoding="edge_type", nodelist=None, variables=None):
         """
-        The reverse, with the same six encodings.
+        The reverse, with the same six encodings, and the inverse table defined here.
 
         A graph converted out and back comes back equal to itself, for every one of them.
         """
@@ -324,7 +318,6 @@ class TimeseriesDAG(_TimeseriesCoreGraph):
     """
 
     SUPPORTED_EDGE_TYPES = frozenset(["->", "<-"])
-    _MARK_TO_EDGE_TYPE = {"-->": "->", "<--": "<-"}
 ```
 
 A DAG has only directed links, so why list both `"->"` and `"<-"`? Because an edge written backwards in time
@@ -341,11 +334,15 @@ class TimeseriesPDAG(_TimeseriesCoreGraph):
     """
 
     SUPPORTED_EDGE_TYPES = frozenset(["->", "<-", "--"])
-    _MARK_TO_EDGE_TYPE = {"-->": "->", "<--": "<-", "o-o": "--"}
 ```
 
 `"--"` means the algorithm found a link but could not say which way it points. That can only happen at lag 0.
 Across time there is nothing to decide: the earlier event is the cause, because the later one cannot be.
 
-Neither subclass defines a method. All that separates them is which edge types they accept and which tigramite
-marks turn into those types.
+Neither subclass defines a method, and neither declares anything but its frozenset. That one line is also what
+decides which tigramite marks the class will accept.
+
+### User journeys with the solution
+
+
+### Open Questions
