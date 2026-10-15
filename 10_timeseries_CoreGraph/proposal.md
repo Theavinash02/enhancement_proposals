@@ -448,4 +448,49 @@ g.add_edge(("A", -5), ("B", 0), "->")
 ```
 ValueError: Edge lag 5 exceeds tau_max=2. Build the graph with a larger tau_max to allow it.
 ```
+
+**3. Reading the structure**
+
+Two forms. `get_edges` renders `(variable, time)` pairs in the caller's frame:
+
+```python
+sorted(dag.get_edges(data=True))
+```
+
+```
+[(('A', -1), ('A', 0), '->'),
+ (('A', -1), ('B', 0), '->'),
+ (('B', 0), ('C', 0), '->'),
+ (('C', -2), ('A', 0), '->')]
+```
+
+`get_links` drops times entirely and gives the lag - one tuple per cell of the tigramite array:
+
+```python
+sorted(dag.get_links())
+```
+
+```
+[('A', 'A', 1, '->'), ('A', 'B', 1, '->'), ('B', 'C', 0, '->'), ('C', 'A', 2, '->')]
+```
+
+For a single pair:
+
+```python
+dag.get_lag(("A", -1), ("B", 0))
+```
+
+```
+1
+```
+
+The variable names, times dropped - this also fixes the row and column order of the array:
+
+```python
+dag.variables
+```
+
+```
+['A', 'B', 'C']
+```
 ### Open Questions
