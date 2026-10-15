@@ -384,5 +384,68 @@ g.tau_max
 ```
 3
 ```
+Node roles are accepted at construction, as on any other graph:
 
+```python
+TimeseriesDAG(
+    edge_list=[(("A", -1), ("B", 0), "->")],
+    latents={("A", -1)},
+).latents
+```
+
+```
+{('A', -1)}
+```
+
+**2. Adding and removing**
+
+```python
+g = dag.copy()
+g.add_edge(("B", -1), ("C", 0), "->")
+g.has_edge(("B", -1), ("C", 0))
+```
+
+```
+True
+```
+
+The same link in any other frame reaches the same edge, so it can be removed with times it was never added
+with:
+
+```python
+g.remove_edge(("B", 4), ("C", 5), "->")
+g.has_edge(("B", -1), ("C", 0))
+```
+
+```
+False
+```
+
+`has_edge` narrows to one type, and `None` means any type will do:
+
+```python
+g.has_edge(("A", -1), ("B", 0), "->")
+```
+
+```
+True
+```
+
+A bare name is a variable at time 0:
+
+```python
+g.add_node("D")
+g.add_nodes_from(["E", "F"])
+```
+
+`add_edges_from` and `remove_edges_from` are inherited and go through the same normalising. A lag above
+`tau_max` is refused:
+
+```python
+g.add_edge(("A", -5), ("B", 0), "->")
+```
+
+```
+ValueError: Edge lag 5 exceeds tau_max=2. Build the graph with a larger tau_max to allow it.
+```
 ### Open Questions
