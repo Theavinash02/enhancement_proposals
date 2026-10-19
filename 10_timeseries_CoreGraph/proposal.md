@@ -476,6 +476,26 @@ sorted(dag.get_children(("A", -1)))
 [('A', 0), ('B', 0)]
 ```
 
+**5. Parents grouped by lag**
 
+What a conditioning set is built from. The lag comes back alongside the name, because the pair is what identifies the parent:
+
+```python
+dag.get_parents_by_lag("A")
+```
+
+```
+{1: ['A'], 2: ['C']}
+```
+
+A variable with only a contemporaneous parent groups under lag 0:
+
+```python
+dag.get_parents_by_lag("C")
+```
+
+```
+{0: ['B']}
+```
 
 ### Open Questions
