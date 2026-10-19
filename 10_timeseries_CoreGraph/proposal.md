@@ -311,15 +311,13 @@ decides which tigramite marks the class will accept.
 ```python
 from pgmpy.base import TimeseriesDAG
  
-dag = TimeseriesDAG(
-    edge_list=[
-        (("A", -1), ("A", 0), "->"),
-        (("A", -1), ("B", 0), "->"),
-        (("B", 0), ("C", 0), "->"),
-        (("C", -2), ("A", 0), "->"),
-    ],
-    tau_max=2,
-)
+dag_edges = [
+    (("A", -1), ("A", 0), "->"),
+    (("A", -1), ("B", 0), "->"),
+    (("B", 0), ("C", 0), "->"),
+    (("C", -2), ("A", 0), "->"),
+]
+dag = TimeseriesDAG(edge_list=dag_edges, tau_max=2)
 dag.tau_max
 ```
  
@@ -414,7 +412,7 @@ ValueError: Edge lag 5 exceeds tau_max=2. Build the graph with a larger tau_max 
 
 **3. Reading the structure**
 
-Two forms. `get_edges` renders `(variable, time)` pairs in the caller's frame:
+Two forms. `get_edges` gives a `(variable, time)` pair at each end, with the present slice at 0:
 
 ```python
 sorted(dag.get_edges(data=True))
@@ -517,5 +515,132 @@ sorted(dag.get_inter_edges())
 ```
 [('A', 'A', 1, '->'), ('A', 'B', 1, '->'), ('C', 'A', 2, '->')]
 ```
+
+**7. Array conversion - from_adjacency and to_adjacency**
+
+This is how a PCMCI estimator in pgmpy#3588 hands its result over. Out first - `tigramite` is the default, so no `encoding` argument:
+
+```python
+arr = dag.to_adjacency()
+arr.shape
+```
+
+```
+(3, 3, 3)
+```
+
+```python
+arr
+```
+
+```
+array([[['', '-->', ''],
+        ['', '-->', ''],
+        ['', '', '']],
+
+       [['', '', ''],
+        ['', '', ''],
+        ['-->', '', '']],
+
+       [['', '', '-->'],
+        ['<--', '', ''],
+        ['', '', '']]], dtype='<U3')
+```
+
+Row and column order is `dag.variables`, which is `['A', 'B', 'C']`. `arr[0, 0, 1]` is `A` at lag 1 into `A` now; `arr[2, 0, 2]` is `C` at lag 2 into `A` now. The contemporaneous `B -> C` occupies both `arr[1, 2, 0]` as `'-->'` and `arr[2, 1, 0]` as `'<--'`, which is tigramite's own convention for a lag-0 link.
+
+And back in:
+
+```python
+TimeseriesDAG.from_adjacency(arr, variables=dag.variables) == dag
+```
+
+```
+True
+```
+
+`variables` is load-bearing for equality and ordering. A bare array carries no names, so without it the variables come back as the integer indices and the graph, while structurally identical, is not equal to the one it came from:
+
+```python
+TimeseriesDAG.from_adjacency(arr) == dag
+```
+
+```
+False
+```
+
+```python
+TimeseriesDAG.from_adjacency(arr).variables
+```
+
+```
+[0, 1, 2]
+```
+
+Any other encoding is refused, naming the class:
+
+```python
+dag.to_adjacency(encoding="pcalg")
+```
+
+```
+ValueError: TimeseriesDAG only supports encoding='tigramite'; got encoding='pcalg'. The two-dimensional encodings have no axis for the lag.
+```
+
+A two-dimensional array is a shape error rather than another format, since there is no longer anything to select between:
+
+```python
+TimeseriesDAG.from_adjacency(np.zeros((3, 3), dtype=int))
+```
+
+```
+ValueError: Expected a three-dimensional array of shape (N, N, tau_max + 1), the third axis being the lag.
+Got shape (3, 3).
+```
+
+The plain 0/1 array tigramite produces before it converts marks also decodes, as long as every link is lagged:
+
+```python
+raw = np.zeros((3, 3, 3), dtype=int)
+raw[0, 1, 1] = 1          # A at lag 1 -> B
+raw[2, 0, 2] = 1          # C at lag 2 -> A
+raw
+```
+
+```
+array([[[0, 0, 0],
+        [0, 1, 0],
+        [0, 0, 0]],
+
+       [[0, 0, 0],
+        [0, 0, 0],
+        [0, 0, 0]],
+
+       [[0, 0, 1],
+        [0, 0, 0],
+        [0, 0, 0]]])
+```
+
+```python
+sorted(TimeseriesDAG.from_adjacency(raw, variables=["A", "B", "C"]).get_links())
+```
+
+```
+[('A', 'B', 1, '->'), ('C', 'A', 2, '->')]
+```
+
+A symmetric pair at lag 0 in a 0/1 array is an unoriented link, which a `TimeseriesDAG` cannot hold. The same array again, with that pair added between `B` and `C` in the present:
+
+```python
+raw_with_contemporaneous = raw.copy()
+raw_with_contemporaneous[1, 2, 0] = 1
+raw_with_contemporaneous[2, 1, 0] = 1
+
+TimeseriesDAG.from_adjacency(raw_with_contemporaneous, variables=["A", "B", "C"])
+```
+
+```
+ValueError: adj[1, 2, 0] and adj[2, 1, 0] are both 1, which marks an unoriented link.
+TimeseriesDAG supports ['->', '<-'].
 
 ### Open Questions
