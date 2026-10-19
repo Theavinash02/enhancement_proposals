@@ -12,9 +12,8 @@ pgmpy has no class that can hold a stationary time-series causal graph. The only
 1. It stores `(variable, time_slice)` nodes, and `add_edge` materialises the slice-1 copy of every lag-0 edge
    rather than deriving it, so one link occupies two stored edges.
 2. It is limited to lag 1. There is no `tau_max`.
-3. It carries CPDs and a `check_model` contract. Causal discovery produces structure only.
-4. It has no way to represent an unoriented link.
-5. There is no way to read in the output format these algorithms use: tigramite's `(N, N, tau_max + 1)` array, where `graph[i, j, tau]` describes the link between `var_i` at lag `tau` and `var_j` in the present.
+3. It has no way to represent an unoriented link.
+4. There is no way to read in the output format these algorithms use: tigramite's `(N, N, tau_max + 1)` array, where `graph[i, j, tau]` describes the link between `var_i` at lag `tau` and `var_j` in the present.
 
 ### Proposed Solution
 
@@ -44,20 +43,17 @@ Where a method takes an optional edge type, the "any type" value is `None` rathe
 `"--"` would be the obvious sentinel but it is not in `TimeseriesDAG.SUPPORTED_EDGE_TYPES`, so a query would be
 passing that class an edge type it does not accept. `None` is carried through an endpoint swap unchanged.
 
-#### Adjacency: `"tigramite"` as a sixth encoding
+#### Adjacency: `"tigramite"` as the only encoding
 
 `_CoreGraph` defines `from_adjacency` / `to_adjacency`, with an `encoding` argument selecting the
 format - `edge_type`, `binary`, `bnlearn`, `causal-learn`, `pcalg` - and documents the round-trip invariant
 `cls.from_adjacency(g.to_adjacency(e), encoding=e) == g`. None of those five has a third axis, so none can carry a lag.
 
-A time-series graph needs a third dimension for the lag. Overriding the inherited methods with a different signature and return type would silently break that invariant for anyone
-holding a `TimeseriesDAG`.
-
-`_TimeseriesCoreGraph` overrides both the methods, and `tigramite` is the only encoding:
+A time-series graph needs a third dimension for the lag. And `_TimeseriesCoreGraph` overrides both the methods, and `tigramite` is the only encoding:
 
 ```python
-from_adjacency(cls, adj, encoding="edge_type", variables=None)
-to_adjacency(self, encoding="edge_type", nodelist=None, variables=None)
+from_adjacency(cls, adj, encoding="tigramite", variables=None)
+to_adjacency(self, encoding="tigramite", variables=None)
 ```
 
 - `encoding` stays in the signature, defaulting to `"tigramite"`, and any other value raises naming the class: `TimeseriesDAG only supports encoding='tigramite'; got encoding='pcalg'. The two-dimensional encodings have no axis for the lag.`
@@ -65,7 +61,7 @@ to_adjacency(self, encoding="edge_type", nodelist=None, variables=None)
 - There is nothing left to auto-detect. With one encoding, the dimensionality check is validation rather than selection: a 2-D array is an error, not a different format.
 - The round-trip invariant becomes single-encoding: `cls.from_adjacency(g.to_adjacency(), variables=g.variables) == g`. `variables` is load-bearing for equality, not merely for ordering — the array carries no names, so without it the variables come back as the integer indices `0 … N-1` and the graph, while structurally identical, is not equal to the one it came from.
 
-This diverges from the base class's contract, which is the cost: a `TimeseriesDAG` cannot stand in for a `_CoreGraph` wherever one of the five encodings is requested. The alternative — adding `tigramite` as a sixth encoding and delegating the rest to `super()` — preserves that substitutability, at the price of five reachable formats that serialise a time-series graph into a shape nothing consumes. See Alternative Solutions.
+This diverges from the base class's contract, which is the cost: a `TimeseriesDAG` cannot stand in for a `_CoreGraph` wherever one of the five encodings is requested. The alternative — adding `tigramite` as a sixth encoding and delegating the rest to `super()` — preserves that substitutability, at the price of five reachable formats that serialise a time-series graph into a shape nothing consumes.
 
 The table translating tigramite’s three-character marks to and from pgmpy’s two-character edge types is local
 to `from_adjacency` and `to_adjacency`, exactly as `_CoreGraph` already keeps its `pcalg` and `causal-learn`
@@ -309,6 +305,7 @@ decides which tigramite marks the class will accept.
 **1. Building a graph**
  
 ```python
+import numpy as np
 from pgmpy.base import TimeseriesDAG
  
 dag_edges = [
@@ -716,5 +713,5 @@ list(dag.edges(keys=True, data=True))
  (('B',  0), ('C', 0), 0, {('B', 0): '-', ('C', 0): '>'})]
 ```
 
-- Four stored edges for four links - one each, with no shifted copies. The pair order is in tuple.
--  **Every head sits at offset 0.** The tail carries the whole lag as a negative offset. That is the normalisation `_normalize_edge` applies, and it is what makes `(("A", -1), ("B", 0))` and `(("A", 0), ("B", 1))` the same stored edge. 
+- Four stored edges for four links - one each, with no shifted copies. The pair order in the tuple is `nx`'s, not the link's: the third edge is listed as `('A', 0), ('C', -2)` even though the link runs `C` at -2 into `A` now, which is why `get_links` puts the earlier end first itself.
+-  **Every head sits at offset 0.** : The tail carries the whole lag as a negative offset. That is the normalisation `_normalize_edge` applies, and it is what makes `(("A", -1), ("B", 0))` and `(("A", 0), ("B", 1))` the same stored edge. 
