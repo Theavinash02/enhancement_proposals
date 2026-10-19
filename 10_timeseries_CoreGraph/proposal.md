@@ -663,6 +663,24 @@ sub.tau_max
 ```
 2
 ```
+`copy` is built on `get_subgraph`, so the one override fixes both:
 
+```python
+dag.copy() == dag
+```
+
+```
+True
+```
+
+Equality takes `tau_max` into account. The same links under a different maximum are a different graph, because the two accept different things:
+
+```python
+TimeseriesDAG(edge_list=dag_edges, tau_max=3) == dag
+```
+
+```
+False
+```
 
 ### Open Questions
