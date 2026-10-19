@@ -643,4 +643,26 @@ TimeseriesDAG.from_adjacency(raw_with_contemporaneous, variables=["A", "B", "C"]
 ValueError: adj[1, 2, 0] and adj[2, 1, 0] are both 1, which marks an unoriented link.
 TimeseriesDAG supports ['->', '<-'].
 
+**8. Subgraph - get_subgraph and copy**
+
+`get_subgraph` carries `tau_max` across, which the inherited version would have reset to 0:
+
+```python
+sub = dag.get_subgraph(nodes=[("A", -1), ("A", 0), ("B", 0)])
+sorted(sub.get_edges(data=True))
+```
+
+```
+[(('A', -1), ('A', 0), '->'), (('A', -1), ('B', 0), '->')]
+```
+
+```python
+sub.tau_max
+```
+
+```
+2
+```
+
+
 ### Open Questions
