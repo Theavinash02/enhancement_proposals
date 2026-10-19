@@ -498,4 +498,24 @@ dag.get_parents_by_lag("C")
 {0: ['B']}
 ```
 
+**6. Same-time and across-time links**
+
+Named to match the methods DBN already has. Both return the lag-relative form:
+
+```python
+sorted(dag.get_intra_edges())
+```
+
+```
+[('B', 'C', 0, '->')]
+```
+
+```python
+sorted(dag.get_inter_edges())
+```
+
+```
+[('A', 'A', 1, '->'), ('A', 'B', 1, '->'), ('C', 'A', 2, '->')]
+```
+
 ### Open Questions
