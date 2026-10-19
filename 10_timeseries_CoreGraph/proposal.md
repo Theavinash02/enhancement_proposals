@@ -456,4 +456,26 @@ dag.variables
 ```
 ['A', 'B', 'C']
 ```
+**4. Parents and children**
+
+Inherited, returning the same `(variable, time)` pairs `get_edges` reports:
+
+```python
+sorted(dag.get_parents(("A", 0)))
+```
+
+```
+[('A', -1), ('C', -2)]
+```
+
+```python
+sorted(dag.get_children(("A", -1)))
+```
+
+```
+[('A', 0), ('B', 0)]
+```
+
+
+
 ### Open Questions
