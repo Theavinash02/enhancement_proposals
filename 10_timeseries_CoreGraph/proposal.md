@@ -683,4 +683,38 @@ TimeseriesDAG(edge_list=dag_edges, tau_max=3) == dag
 False
 ```
 
-### Open Questions
+
+### How the data is stored internally
+ `_CoreGraph` is an `nx.MultiGraph` subclass, so a `TimeseriesDAG` is one: there is no separate store, and no storage function. For the `dag` built in journey 1:
+
+```python
+from pgmpy.base import TimeseriesDAG
+ 
+dag_edges = [
+    (("A", -1), ("A", 0), "->"),
+    (("A", -1), ("B", 0), "->"),
+    (("B", 0), ("C", 0), "->"),
+    (("C", -2), ("A", 0), "->"),
+]
+dag = TimeseriesDAG(edge_list=dag_edges, tau_max=2)
+dict(dag.nodes(data=True))
+```
+
+```
+{('A', -1): {}, ('A', 0): {}, ('B', 0): {}, ('C', 0): {}, ('C', -2): {}}
+```
+Five nodes for three variables. A variable appears once per distinct offset it is actually used at: `A` at the present and at -1, `C` at the present and at -2, `B` only at the present. These are offsets, not time points - nothing is allocated per time step, and `tau_max` does not decide how many nodes exist.
+
+```python
+list(dag.edges(keys=True, data=True))
+```
+
+```
+[(('A', -1), ('A', 0), 0, {('A', -1): '-', ('A', 0): '>'}),
+ (('A', -1), ('B', 0), 0, {('A', -1): '-', ('B', 0): '>'}),
+ (('A',  0), ('C', -2), 0, {('C', -2): '-', ('A', 0): '>'}),
+ (('B',  0), ('C', 0), 0, {('B', 0): '-', ('C', 0): '>'})]
+```
+
+- Four stored edges for four links - one each, with no shifted copies. The pair order is in tuple.
+-  **Every head sits at offset 0.** The tail carries the whole lag as a negative offset. That is the normalisation `_normalize_edge` applies, and it is what makes `(("A", -1), ("B", 0))` and `(("A", 0), ("B", 1))` the same stored edge. 
